@@ -1,1 +1,3 @@
 # PUBG-Clustering
+
+Ce projet en R a pour objectif de réaliser un clustering des joueurs dans le jeu PUBG (PlayerUnknown's Battlegrounds). Le clustering est une méthode essentielle en analyse de données pour identifier des groupes de comportements similaires. Dans cette étude, nous analysons les données de performance des joueurs de PUBG à l’aide de différentes techniques de classification non supervisée. Nous appliquons des méthodes comme le K-means et le modele de mélange pour regrouper les joueurs en fonction de leurs styles de jeu, leurs performances et leurs habitudes. L'objectif est de découvrir des patterns cachés dans les données afin d’identifier des profils types de joueurs et de mieux comprendre les différences de comportement au sein de la communauté PUBG.
