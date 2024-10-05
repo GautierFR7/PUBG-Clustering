@@ -1,0 +1,668 @@
+---
+title: "PUBG"
+author: "BIHEL Léo, FRANCOIS Gautier & VALLEE Paul"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    downcute_theme: chaos
+    highlight: tango
+    number_sections: yes
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Importation des librairies
+pacman::p_load(tidyverse, DT, caret, corrplot, cluster, factoextra, FactoMineR,mclust)
+```
+
+# Introduction
+
+PlayerUnknown's Battlegrounds (PUBG) est un jeu vidéo multijoueur en ligne de type battle royale développé et édité par PUBG Corporation. L'objectif du jeu est de devenir le dernier joueur ou la dernière équipe en vie en éliminant les autres joueurs. Les joueurs commencent sans équipement et sont largués sur une île où ils doivent trouver des armes, des véhicules et d'autres ressources pour survivre. Le jeu est disponible sur plusieurs plateformes, notamment Microsoft Windows, Xbox One, PlayStation 4, Android et iOS.
+
+Dans ce projet, nous allons analyser un jeu de données contenant des statistiques de jeu de 4000 joueurs de PUBG. Notre objectif est de découvrir des tendances, d’identifier des comportements typiques des joueurs et de comprendre comment ces éléments influencent le succès dans le jeu.
+# Présentation des données
+
+Commençons par afficher les premières lignes de notre jeu de données.
+
+```{r, echo = FALSE}
+# Importation des données
+data <- read.csv("PUBG.csv", sep = ",", dec = ".", header = TRUE, row.names = 1)
+
+# Afficher les premières lignes du jeu de données
+knitr::kable(head(data))
+```
+
+```{r, echo = FALSE}
+# Mettre une graine pour la reproductibilité
+set.seed(1234)
+```
+
+```{r, echo = FALSE, results = 'hide'}
+# Afficher les dimensions du jeu de données
+dim(data)
+
+# Afficher le type des variables
+str(data)
+
+# Afficher un résumer statistique des variables
+summary(data)
+```
+
+Le jeu de données est composé de 4000 observations et 25 variables. Les variables sont les suivantes :
+
+| Nom de la variable | Description |
+|--------------------|-------------|
+| `WinRatio` | Ratio de victoire |
+| `TimeSurvived` | Temps total survécu |
+| `RoundsPlayed` | Parties jouées |
+| `Wins` | Nombre de Victoires |
+| `Top10s` | Nombre de Top 10 |
+| `Top10Ratio` | Ratio top 10 |
+| `Losses` | Nombre Défaites |
+| `DamagePg` | Dégâts par partie |
+| `HeadshotKillsPg` | Tirs à la tête par partie |
+| `HealsPg` | Soins par partie |
+| `KillsPg` | Tués par partie |
+| `MoveDistancePg` | Distance parcourue par partie |
+| `TimeSurvivedPg` | Temps de survie moyen par partie |
+| `Kills` | Nombre de Tués |
+| `Assists` | Nombre d'assists |
+| `HeadshotKills` | Nombre de Tirs à la tête |
+| `LongestTimeSurvived` | Temps de survie le plus long |
+| `WalkDistance` | Distance parcourue à pied |
+| `RideDistance` | Distance parcourue en véhicule |
+| `MoveDistance` | Distance parcourue |
+| `AvgWalkDistance` | Distance moyenne à pied |
+| `AvgRideDistance` | Distance moyenne en véhicule |
+| `Heals` | Nombre de Soins utilisés |
+| `Boosts` | Nombre de Boosts utilisés |
+| `DamageDealt` | Dégâts Total infligés |
+
+# Traitement et compréhension des données
+
+## Detection des valeurs manquantes et abérantes
+
+```{r, echo = FALSE, warning = FALSE}
+sum(is.na(data))
+```
+
+Il n'y a pas de valeurs manquantes dans le jeu de données. Cependant, il y a 9 joueurs qui ont parcouru une distance à pied de 0m au cours de leurs parties jouées et qui possèdent aucune statistique de jeu. Nous avons fait le choix de les supprimer.
+
+```{r, echo = FALSE}
+knitr::kable(data %>% filter(WalkDistance == 0))
+```
+
+```{r, echo = FALSE}
+data <- data %>% filter(WalkDistance != 0)
+```
+
+## Choix sur les données
+
+Dans un premier temps, nous avons constaté que la variable `RoundsPlayed` est une variable quantitative qui représente le nombre de parties jouées par chaque joueur. Nous avons remarqué que plusieurs joueurs ont joué un nombre très faible de parties, ce qui peut fausser les résultats de notre analyse, par exemple des joueurs ont un `WinRatio` de 100% alors qu'ils n'ont joué qu'une partie, cela n'est pas suffisant pour déterminer leur niveau de performance. Nous avons donc décidé de ne pas tenir compte des joueurs ayant joué moins de 5 parties.
+
+```{r, echo = FALSE}
+data <- data %>% filter(RoundsPlayed >= 5)
+```
+
+De plus, nous avons remarqué que les variables expliquent des statistiquent différents. Nous avons d'une part les statistiques par jeu, avec le suffixe `Pg` et d'autre les statistiques totales. Nous avons décidé de ne pas tenir compte des statistiques par totales pour notre analyse. En effet, ces statistiques peuvent être biaisées par le nombre de parties jouées. Par exemple, un joueur qui a joué 1000 parties aura forcément un nombre de dégats plus élevé qu'un joueur qui a joué 100 parties. Nous avons donc décidé de ne pas tenir compte des variables suivantes : `DamageDealt`, `Heals`, `Boosts`, `Kills`, `Assists`, `HeadshotKills`, `LongestTimeSurvived`, `TimeSurvived`, `WalkDistance`, `RideDistance`, `MoveDistance`. Nous avons décidé de garder les variables de type ratio, qui rapportent les statistiques par partie jouée.
+
+```{r, echo = FALSE}
+data <- data %>% select(WinRatio, RoundsPlayed, Top10Ratio, DamagePg, HeadshotKillsPg, HealsPg, KillsPg, MoveDistancePg, TimeSurvivedPg, AvgWalkDistance, AvgRideDistance)
+```
+
+# Statistique descriptive
+
+## Répartition des joueurs par nombre de parties jouées
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = RoundsPlayed)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par nombre de parties jouées", x = "Nombre de parties jouées", y = "Nombre de joueurs")
+```
+
+La majorité des joueurs ont joué entre 5 et 100 parties. Il y a très peu de joueurs qui ont joué plus de 250 parties et ce nombre continue de décroitre avec l'augmentation du nombre de partie jouée.
+
+## Répartition des joueurs par ratio de victoire
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = WinRatio)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par ratio de victoire", x = "Ratio de victoire", y = "Nombre de joueurs")
+```
+
+On voit que la majorité des joueurs ont un ratio de victoire compris entre 0 et 20%. Il y a très peu de joueurs qui ont un ratio de victoire supérieur à 20%. On peut en déduire que la majorité des joueurs ne sont pas des joueurs compétitifs ou professionnels.
+
+## Répartition des joueurs par ratio de top 10
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = Top10Ratio)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par ratio de top 10", x = "Ratio de top 10", y = "Nombre de joueurs")
+```
+La répartition semble suivre une loi normale. On observe aussi que la majorité des joueurs ont un ratio de top 10 compris entre 0 et 50%. Il y a très peu de joueurs qui ont un ratio de top 10 supérieur à 50%.
+
+## Répartition des joueurs par dégâts par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = DamagePg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par dégâts par partie", x = "Dégâts par partie", y = "Nombre de joueurs")
+```
+
+## Répartition des joueurs par tirs à la tête par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = HeadshotKillsPg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par tirs à la tête par partie", x = "Tirs à la tête par partie", y = "Nombre de joueurs")
+```
+
+Peu de joueurs parviennent à réaliser des tirs à la tête. La majorité des joueurs ont un ratio de tirs à la tête par partie compris entre 0 et 0.5. Il y a très peu de joueurs qui ont un ratio de tirs à la tête supérieur à 0.5.
+
+## Répartition des joueurs par soins par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = HealsPg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par soins par partie", x = "Soins par partie", y = "Nombre de joueurs")
+```
+
+## Répartition des joueurs par tués par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = KillsPg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par tués par partie", x = "Tués par partie", y = "Nombre de joueurs")
+```
+
+## Répartition des joueurs par distance parcourue par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = MoveDistancePg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par distance parcourue par partie", x = "Distance parcourue par partie", y = "Nombre de joueurs")
+```
+
+Cette distribution semble suivre une loi normale.
+
+## Répartition des joueurs par temps de survie par partie
+
+```{r, echo = FALSE}
+data %>% ggplot(aes(x = TimeSurvivedPg)) +
+  geom_histogram(bins = 30, fill = "grey", color = "black") +
+  labs(title = "Répartition des joueurs par temps de survie par partie", x = "Temps de survie par partie", y = "Nombre de joueurs")
+```
+
+On observe sur ce graphique que la distribution semble suivre une loi normale. 
+
+# Analyse multivariée
+
+## Pairs
+
+On étudie la relation linéaire ou non entre les différentes variables.
+
+```{r, echo = FALSE}
+pairs(data)
+```
+
+Sur ces graphiques, nous ne pouvons pas observer des groupes qui se distinguent 
+
+## Matrice de corrélation
+
+```{r, echo = FALSE}
+correlation <- cor(data)
+corrplot(correlation, method = "number", type = "upper", tl.col = "black", tl.srt = 45, tl.cex = 0.7)
+```
+
+On peut observer que les variables `KillsPg` et `DamagePg` sont fortement corrélées. De même pour les variables `TimeSurvived` et `Top10Ratio`. Les autres variables sont faiblement corrélées entre elles.
+
+## Analyse en composantes principales
+
+On réalise une ACP pour réduire la dimensionnalité des données.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+acp <- PCA(data, scale = TRUE)
+acp$eig
+barplot(acp$eig[,2])
+```
+On remarque ques les 3 premières composantes principales expliquent presque 75% de la variance totale. On remarque aussi que les variables `KillsPg`, `DamagePg`, `HeadshotKillsPg` et `HealsPg` sont corrélées positivements entre elles. Les variables `MoveDistancePg` et `TimeSurvivedPg`, ... sont également corrélées positivement entre elles. Mais ces 2 groupes de variables semblent être indépendants entre eux.
+
+
+# Classification Ascendante Hiérarchique
+
+## Normalisation des données
+
+Nos données ne possèdent pas la même échelle (unité). Il est donc nécessaire de les normaliser.
+
+```{r, echo = FALSE}
+data_norm <- scale(data)
+data_norm <- as.data.frame(data_norm)
+```
+
+## CAH distance de Ward D2
+
+On commence par calculer la matrice des distances euclidiennes, puis on effectue l'ACP et enfin on calcule le dendrogramme.
+
+```{r, echo = FALSE}
+# Calcul de la distance euclidienne
+d <- dist(data_norm, method = "euclidean")
+
+# Calcul du dendrogramme
+ward2_model <- hclust(d, method = "ward.D2")
+```
+
+On représente la perte d'inerties en fonction du nombre de clusters afin de déterminer le nombre optimal de clusters.
+
+```{r, echo = FALSE}
+#Représenter la perte d'inertie intra pour methode du coude
+plot(rev(ward2_model$height), type = "b", xlim = c(0, 10))
+```
+
+En appliquant la méthode "du coude", on peut voir que le nombre de clusters optimal est de 3. Representons maintenant ces clusters.
+
+```{r, echo = FALSE}
+# Représentation graphique du dendrogramme
+plot(ward2_model, cex = 0.6, hang = -1, main = "Dendrogramme CAH")
+
+# Découpage du dendrogramme en 3 clusters
+groupes_ward2 <- cutree(ward2_model, k = 3)
+rect.hclust(ward2_model, k = 3, border = "red")
+```
+
+## CAH distance de Ward D
+
+```{r}
+# Calcul du dendrogramme
+ward_model <- hclust(d, method = "ward.D")
+```
+
+On représenté la perte d'inerties en fonction du nombre de clusters afin de déterminer le nombre optimal de clusters.
+
+```{r}
+#Représenter la perte d'inertie intra pour methode du coude
+plot(rev(ward_model$height), type = "b", xlim = c(0, 10))
+```
+
+En appliquant la méthode "du coude", on peut voir que le nombre de clusters optimal est de 3. Representons maintenant ces clusters.
+
+```{r}
+# Représentation graphique du dendrogramme
+plot(ward_model, cex = 0.6, hang = -1, main = "Dendrogramme CAH")
+
+# Découpage du dendrogramme en 3 clusters
+groupes <- cutree(ward_model, k = 3)
+rect.hclust(ward_model, k = 3, border = "red")
+```
+
+
+## CAH distance du saut minimal
+
+Cette distance sépare les individus selon la plus petite distance de couple (a, b) appartenant à A et B. Les avantages de cette distance sont qu'elle permet de faire des groupes bien séparés. Cependant, les groupes peuvent être très étendus.
+
+```{r, echo = FALSE}
+# Calcul du dendrogramme
+single_model <- hclust(d, method = "single")
+```
+
+On represente la perte d'inerties en fonction du nombre de clusters afin de déterminer le nombre optimal de clusters.
+
+```{r, echo = FALSE}
+#Représenter la perte d'inertie intra pour methode du coude
+plot(rev(single_model$height), type = "b", xlim = c(0, 10))
+```
+
+En appliquant la méthode "du coude", on peut voir que le nombre de clusters optimal est de 2. Representons maintenant ces clusters.
+
+```{r, echo = FALSE}
+# Représentation graphique du dendrogramme
+plot(single_model, cex = 0.6, hang = -1, main = "Dendrogramme CAH")
+
+# Découpage du dendrogramme en 2 clusters
+groupes <- cutree(single_model, k = 2)
+rect.hclust(single_model, k = 2, border = "red")
+```
+
+On observe que le découpage en 2 groupes n'est pas optimal.
+
+## CAH distance du saut maximal
+
+Cette distance sépare les individus selon la plus grande distance de couple (a, b) appartenant à A et B. L'avantage de cette distance est qu'elle permet de faire des groupes compactes. Un de ses inconvenients sera que les groupes sont pe séparés.
+
+```{r, echo = FALSE}
+# Calcul du dendrogramme
+complete_model <- hclust(d, method = "complete")
+```
+
+On represente la perte d'inerties en fonction du nombre de clusters afin de déterminer le nombre optimal de clusters.
+
+```{r, echo = FALSE}
+#Représenter la perte d'inertie intra pour methode du coude
+plot(rev(complete_model$height), type = "b", xlim = c(0, 10))
+```
+
+En appliquant la méthode "du coude", on peut voir que le nombre de clusters optimal est de 2. Representons maintenant ces clusters.
+
+```{r}
+# Représentation graphique du dendrogramme
+plot(complete_model, cex = 0.6, hang = -1, main = "Dendrogramme CAH")
+
+# Découpage du dendrogramme en 3 clusters
+groupes <- cutree(complete_model, k = 2)
+rect.hclust(complete_model, k = 2, border = "red")
+```
+
+La aussi, on observe que le découpage n'est pas optimal.
+
+## Comparaison des différentes méthodes
+
+Maintenant que nous avons effectué la classification ascendante hiérarchique avec différentes méthodes de liaison, nous allons comparer les résultats obtenus. Notamment, nous allons comparer les inerties intra-classe pour chaque méthode de liaison.
+
+```{r, echo = FALSE}
+# Calculer l'inertie intra-classe pour chaque méthode de liaison
+ward2_inertia <- sum(ward2_model$height)
+ward_inertia <- sum(ward_model$height)
+single_inertia <- sum(single_model$height)
+complete_inertia <- sum(complete_model$height)
+
+# Comparer les inerties intra-classes
+inertia_values <- c(ward_inertia, ward2_inertia, single_inertia, complete_inertia)
+methods <- c("Ward", "Ward2", "Single", "Complete")
+
+barplot(inertia_values, names.arg = methods, xlab = "Méthode de liaison", ylab = "Inertie intra-classe", main = "Comparaison des méthodes de liaison")
+```
+
+On remarque que si on compare les inerties intra-classe pour chaque type de liaison, il s'agit de la méthode de Single puis Complete qui donne les meilleurs résultats. Cependant, l'évolution globale de l'inertie et l'aspect du dendrogramme nous incite à privilégier la stratégie de Ward ou Ward.d2 et donc un découpage en 3 groupes.
+
+En effet, nous jugeons que faire 2 groupes n'est pas pertinent pour notre étude au vu de la complexité des differents profils de joueurs. De plus, les représentations graphiques avec ces types de liaisons ne sont pas optimales. Nous allons donc nous baser sur la méthode de **Ward.d2** qui nous donne 3 groupes et qui a une inertie intra-classe plus faible que Ward.
+
+# K-means et K-medoïds
+
+## K-means
+
+On va maintenant appliquer la méthode des K-means pour comparer les résultats obtenus avec la CAH. On commence par déterminer le nombre de cluster que l'on souhaite obtenir. Pour cela, on utilise la méthode du coude.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+inertie_intra = sapply(1:20, FUN = function(k) kmeans(data_norm, centers = k, nstart = 25)$tot.withinss)
+plot(inertie_intra, type = "b", xlab = "nb groupes", ylab = "inertie intra")
+```
+
+Ici, on choisirait 3 clusters. On utilise l'option `nstart` du kmeans pour stabiliser les résultats, afin que les résultats sont stables lorsque nous relançons plusieurs fois le code.
+
+```{r, echo = FALSE}
+# Calculer les centroïdes
+kmeans_model <- kmeans(data_norm, centers = 3, nstart = 50)
+```
+
+Nous pouvons représenter les groupes obtenus avec la méthode des K-means.
+
+```{r, echo = FALSE}
+# Représentation graphique des groupes obtenus avec K-means
+clusplot(data_norm, kmeans_model$cluster, col.p =  kmeans_model$cluster, shade = TRUE, labels = 4, lines = 0)
+```
+
+## K-médoïdes
+
+Nous allons maintenant appliquer la méthode des K-médoïdes afin de voir si un clustering ne prennant pas en compte les outliers peut être plus pertinent. Nous allons utiliser 3 clusters puis comparer les résultats obtenus avec les K-means. 
+
+```{r, echo = FALSE}
+# Effectuer le K-medoids avec 3 clusters
+kmedoids_model <- pam(d, k = 3)
+
+# Représenter graphiquement les groupes
+clusplot(data_norm, kmedoids_model$clustering, col.p = kmedoids_model$clustering, shade = TRUE, labels = 4, lines = 0)
+```
+
+## Comparaison entre K-means et K-medoïds
+
+Nous allons maintenant comparer les groupes obtenus avec les deux méthodes. On commence par comparer la taille des groupes que nous avons obtenu avec chacune des méthodes.
+
+```{r, echo = FALSE}
+# Taille des groupes pour K-means
+table(kmeans_model$cluster)
+
+# Taille des groupes pour K-medoids
+table(kmedoids_model$clustering)
+```
+
+On peut voir que les tailles des groupes obtenus avec les deux méthodes sont relativement proches. Cependant, il y a quelques différences, la méthode des K-médoïds semble donner des groupes plus équilibrés. Nous allons maintenant comparer la qualité des groupes obtenus.
+
+Pour cela, nous allons utiliser la méthode de la silhouette pour comparer les groupes obtenus avec les deux méthodes. L'indice de silhouette est une mesure de la qualité d'un clustering, qui évalue à quel point chaque observation est bien regroupée par rapport aux autres observations de son propre cluster par rapport aux observations des autres clusters. Il varie de -1 à 1, où :
+
+- Une valeur proche de +1 indique que l'observation est bien placée dans son propre cluster et est éloignée des autres clusters.
+- Une valeur proche de 0 indique que l'observation est près de la frontière entre deux clusters.
+- Une valeur proche de -1 indique que l'observation est mal placée dans son propre cluster et serait mieux placée dans un autre cluster.
+
+```{r, echo = FALSE}
+# Calculer l'indice de silhouette pour K-means
+silhouette_kmeans <- silhouette(kmeans_model$cluster, dist(data_norm))
+mean(silhouette_kmeans[, 3])
+
+# Calculer l'indice de silhouette pour K-medoids
+silhouette_kmedoids <- silhouette(kmedoids_model$clustering, dist(data_norm))
+mean(silhouette_kmedoids[, 3])
+```
+
+Avec l'indice de silhouette, on peut voir que la méthode des K-means donne un meilleur résultat que les K-médoïdes. Cela signifie que les groupes obtenus avec les K-means sont plus homogènes que ceux obtenus avec les K-means.
+
+# Modèle des CAH rencentré par les K-means
+
+On va maintenant essayer de centrer les groupes obtenus avec la CAH en utilisant les K-means. Pour cela, on va utiliser les centres des classes obtenus avec les K-means comme centres de classe pour les groupes obtenus avec la CAH. Cette méthode permet de mieux discriminer les groupes obtenus avec la CAH en les recentrant autour des centres de classe obtenus avec les K-means.
+
+```{r}
+# Réaliser une CAH des données
+hc <- ward2_model
+
+# Prendre pour les K-means le nombre de groupes décidé par la CAH
+groups <- cutree(hc, k = 3)
+
+# Récupérer les indices des observations pour chaque groupe
+group_indices <- split(1:nrow(data_norm), groups)
+data_num <- data_norm %>% select_if(is.numeric)
+
+# Calculer les centres de classe comme moyenne des observations pour chaque groupe
+centers_cah <- sapply(group_indices, function(indices) colMeans(data_num[indices, ]))
+
+# Transposer pour obtenir les centres en tant que colonnes
+centers_cah <- data.frame(t(centers_cah))
+
+# Initialiser les centres de K-means aux centres de classe de la CAH
+kmeans_hc <- kmeans(data_num, centers = centers_cah, nstart = 25, iter.max = 1000, algorithm = "Lloyd")
+
+#Représenter graphiquement les groupes obtenus
+clusplot(data_num, kmeans_hc$cluster, color = TRUE, shade = TRUE, labels = 4, lines = 0)
+```
+
+```{r}
+#silhouette
+mean(silhouette(kmeans_hc$cluster, d)[, 3])
+table(kmeans_hc$cluster)
+```
+
+
+On peut voir que les groupes obtenus avec la CAH recentrée par les K-means sont plus homogènes que ceux obtenus avec la CAH seule. Cependant les groupes obtenus avec les K-means sont similaires, voir identiques, à ceux obtenus avec les K-means seuls. Cela signifie que les K-means ont déjà bien séparé les groupes et que la CAH n'a pas apporté d'amélioration significative. On va donc garder les groupes obtenus avec les K-means pour la suite de l'analyse.
+
+
+# Modele de Mélange
+
+Le mélange de gaussiennes est un modèle de clustering qui permet de modéliser des données en supposant qu'elles sont issues d'un mélange de plusieurs distributions gaussiennes. Chaque distribution gaussienne représente un cluster. Le modèle de mélange de gaussiennes est souvent utilisé pour des données qui ne sont pas linéairement séparables. 
+
+Dans un premier temps nous pouvons rechercher la partition idéales au regard du critère BIC.
+
+```{r, echo = FALSE}
+# Réaliser un modèle de mélange optimal au regard du critère BIC
+gmm_model <- Mclust(data_norm)
+
+#Représentation graphique des groupes obtenus
+clusplot(data_norm, gmm_model$classification, color = TRUE, shade = TRUE, labels = 4, lines = 0)
+```
+
+```{r, echo = FALSE}
+# Silhouette
+mean(silhouette(gmm_model$classification, d)[, 3])
+```
+
+La partition en 8 groupes semble être la plus adaptée au regard du critère BIC. Cependant, l'indice de silhouette est pratiquement nulle. Cela signifie que les groupes obtenus avec le modèle de mélange de gaussiennes ne sont pas homogènes et donc que les groupes ne sont pas bien séparés. 
+
+Nous pouvons essayer de réduire le nombre de groupes pour voir si cela améliore l'indice de silhouette. Prenons par exemple 3 groupes pour la coherence de notre analyse.
+
+```{r, echo = FALSE}
+gmm_model3 <- Mclust(data_norm,G=3)
+clusplot(data_norm, gmm_model3$classification, color = TRUE, shade = TRUE, labels = 4, lines = 0)
+```
+
+```{r, echo = FALSE}
+mean(silhouette(gmm_model3$classification, d)[, 3])
+```
+
+Bien que le modèle à 3 clusters semble nous donner de meilleurs résultats que la selection par le critère du BIC, la qualité du modèle reste en dessous des performances de nos autres algorithmes. On conclut que le modèle de mélange de gaussiennes n'est pas adapté pour notre jeu de données.
+
+
+# Suggestion de groupes
+
+Grâce à la méthode des K-means, nous avons obtenu 3 groupes de joueurs de PUBG. Nous allons maintenant les analyser et  les comparer afin de proposer une description des différents profils de joueurs.
+
+Dans un premier temps nous pouvons regarder les moyennes des variables normalisé pour chaque cluster afin d'observer les différences entre les groupes.
+
+```{r, echo = FALSE}
+data_analyse <- data_norm
+data_analyse$cluster <- kmeans_model$cluster
+
+data_analyse %>% group_by(cluster) %>% summarise_all(mean) %>%
+  pivot_longer(cols = -cluster, names_to = "Variable", values_to = "Moyenne") %>%
+  ggplot(aes(x = Variable, y = Moyenne, fill = factor(cluster))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Moyennes des variables par cluster",
+       x = "Variable",
+       y = "Moyenne",
+       fill = "Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Il semble que les différents groupes se distinguent bien sur l'ensemble des variables, ce qui est encourageant pour la qualité de la segmentation. En examinant les données, nous constatons que le groupe 1 présente des valeurs très élevées et positives sur l'ensemble des variables, suggérant ainsi que ce groupe a de meilleures performances que les autres. En revanche, le groupe 3 affiche des valeurs négatives sur ces mêmes variables, indiquant un niveau de compétence inférieur aux autres catégories. Quant au groupe 2, il se situe entre les deux autres groupes, ce qui laisse penser qu'il regroupe les joueurs de niveau moyen.
+
+Une différence notable entre ces groupes concerne la variable RoundsPlayed, qui est plus élevée pour le groupe 3. Cela suggère que ce groupe est composé de joueurs ayant un nombre de parties plus élevé malgré un niveau de compétence faible. Cette observation peut être intéressante pour comprendre les comportements des joueurs et leurs habitudes de jeu.
+
+
+```{r, echo = FALSE}
+round(prop.table(table(data_analyse$cluster))*100, 2)
+```
+
+Nous pouvons également examiner la répartition des joueurs dans les différents groupes. La segmentation semble cohérente : nous retrouvons 53% des joueurs dans le groupe Faible, ce qui correspond aux nouveaux joueurs et à ceux de faible niveau, représentant ainsi la majorité des joueurs. Ensuite, 38% des joueurs se trouvent dans le groupe Intermédiaire, regroupant les joueurs de niveau moyen. Enfin, seulement 9% des joueurs sont classés dans le groupe Fort, représentant l'élite des joueurs de PUBG, une poignée de joueurs d'exception.
+
+Nous allons maintenant regarder les statistiques descriptives pour chaque groupe.
+
+```{r, echo = FALSE}
+# Calculer les statistiques descriptives pour toutes les colonnes, à l'exception de la colonne cluster_CAH
+data_tab <- data %>%
+  mutate(cluster = kmeans_model$cluster) %>%
+  group_by(cluster) %>%
+  summarise_all(list(mean = mean, min = min, max = max))
+
+# Afficher les statistiques descriptives
+knitr::kable(data_tab)
+```
+
+En se basant sur les résultats obtenus, nous pouvons suggérer une segmentation des joueurs de PUBG en 3 groupes :
+
+- **Groupe 1 : "Noob" ** : Ce groupe regroupe les mauvais joueurs. Ils jouent beaucoup mais ont un faible nombre de kills, de dégâts infligés et de temps de survie. Ce sont des joueurs qui jouent souvent mais qui ne sont pas très compétents. Il faudrait songer à changer de jeu.
+- **Groupe 2 : "Mid" ** : Ce groupe regroupe les joueurs quotidien moyen. Ils ont un nombre moyen de kills, de dégâts infligés et de temps de survie. Ce sont des joueurs qui jouent régulièrement et qui ont un niveau de compétence moyen.
+- **Groupe 3 :"Pro" ** : Ce groupe regroupe les joueurs compétitifs. Ils font moins de parties que les autres groupes mais ont un nombre élevé de kills, de dégâts infligés et de temps de survie. Ce sont des joueurs qui jouent moins souvent mais qui sont très compétents.
+
+En fonction de ces groupes, nous pourrions proposer des recommandations personnalisées pour chaque type de joueur. Par exemple, pour les joueurs du groupe 2, nous pourrions leur recommander de s'entraîner davantage pour améliorer leur niveau de jeu. Pour les joueurs du groupe 3, nous pourrions leur recommander de participer à des tournois ou à des compétitions pour mettre en valeur leurs compétences.
+
+
+## Modèle de mélange pour identifier des sous-groupes
+
+Le modèle de mélange de gaussiennes peut également être utile pour identifier des sous-groupes au sein des clusters obtenus avec d'autres méthodes de clustering, afin d'observer des structures plus fines dans les données.
+
+Observation de sous groupes au seins de chaque cluster des kmeans. 
+
+```{r, echo = FALSE}
+# Créer des sous-échantillons pour chaque cluster
+data_mid <- data_norm[kmeans_model$cluster == 1, ]
+data_noob <- data_norm[kmeans_model$cluster == 2, ]
+data_pro <- data_norm[kmeans_model$cluster == 3, ]
+
+gmm_model_noob <- Mclust(data_noob)
+gmm_model_medium <- Mclust(data_mid)
+gmm_model_pro <- Mclust(data_pro)
+
+#représentation graphique des groupes obtenus avec le modèle de mélange pour chaque cluster avec clustplot
+par(mfrow = c(1, 3))
+clusplot(data_noob, gmm_model_noob$classification, col.p = gmm_model_noob$classification, shade = TRUE, labels = 4, lines = 0,main = "Noob")
+clusplot(data_mid, gmm_model_medium$classification, col.p = gmm_model_medium$classification, shade = TRUE, labels = 4, lines = 0, main = "Medium")
+clusplot(data_pro, gmm_model_pro$classification, col.p = gmm_model_pro$classification, shade = TRUE, labels = 4, lines = 0, main = "Pro")
+```
+
+Il semble que le modèle de mélange de gaussiennes identifie un nombre optimal de 6 clusters pour chaque cluster, ce qui suggère que chaque groupe obtenu avec les K-means peut être subdivisé en 9 sous-groupes selon cette méthode. Cette approche pourrait être bénéfique pour identifier des profils de joueurs plus spécifiques au sein de chaque groupe. Cependant, il est à noter que les groupes obtenus avec le modèle de mélange de gaussiennes présentent un chevauchement, ce qui indique une séparation moins nette entre les groupes. Cette observation pourrait être attribuée au fait que les données ne correspondent pas parfaitement à des distributions gaussiennes, compromettant ainsi la capacité du modèle à les segmenter de manière précise.
+
+## CAH pour identifier des sous-groupes
+
+```{r, echo = FALSE}
+# Exécuter la classification ascendante hiérarchique (CAH) sur chaque clusters
+d_noob <- dist(data_noob, method = "euclidean")
+d_mid <- dist(data_mid, method = "euclidean")
+d_pro <- dist(data_pro, method = "euclidean")
+
+hc_model_noob <- hclust(d_noob, method = "ward.D2")
+hc_model_mid <- hclust(d_mid, method = "ward.D2")
+hc_model_pro <- hclust(d_pro, method = "ward.D2")
+
+# Représentation graphique des pertes d'inertie pour chaque cluster
+par(mfrow = c(1, 3))
+plot(rev(hc_model_noob$height), xlab = "Nombre de clusters", ylab = "Perte d'inertie", main = "Noob",type = "b",xlim = c(0, 20))
+plot(rev(hc_model_mid$height), xlab = "Nombre de clusters", ylab = "Perte d'inertie", main = "Medium",type = "b",xlim = c(0, 20))
+plot(rev(hc_model_pro$height), xlab = "Nombre de clusters", ylab = "Perte d'inertie", main = "Pro",type = "b",xlim = c(0, 20))
+
+# Découper les clusters en grouoes
+cutree_noob <- cutree(hc_model_noob, k = 2)
+cutree_mid  <- cutree(hc_model_mid, k = 2)
+cutree_pro <- cutree(hc_model_pro, k = 2)
+
+# Représentation graphique des groupes obtenus avec la CAH pour chaque cluster
+par(mfrow = c(1, 3))
+clusplot(data_noob, cutree_noob, col.p = cutree_noob, shade = TRUE, labels = 4, lines = 0, main = "Noob")
+clusplot(data_mid, cutree_mid, col.p = cutree_mid, shade = TRUE, labels = 4, lines = 0, main = "Medium")
+clusplot(data_pro, cutree_pro, col.p = cutree_pro, shade = TRUE, labels = 4, lines = 0, main = "Pro")
+```
+
+Pour le groupe des "Pro", la CAH identifie un nombre optimal de 2 clusters, ce qui suggère que ce groupe peut être subdivisé en 2 sous-groupes distincts. En effet, une dizaine de joueurs semblent se détacher du groupe. Cette approche pourrait être utile pour identifier des profils de joueurs plus spécifiques au sein du groupe, en fonction de leurs caractéristiques et de leurs performances.
+
+```{r, echo = FALSE}
+# Obtenir les stats descriptive du groupre pro 
+table(cutree_pro)
+data_pro <- data.frame(data_pro)
+
+# Recuperer les indexs de lignes
+indexes <- data_pro %>% mutate(cluster = cutree_pro) %>% filter(cluster == 2) %>% rownames()
+knitr::kable(data[indexes,])
+```
+
+```{r, echo = FALSE}
+# Comparaison graphique des moyennes pour chaque variables pour les 2 groupes
+data_pro %>% mutate(cluster = cutree_pro) %>% 
+  gather(key = "variable", value = "value", -cluster) %>%
+  ggplot(aes(x = variable, y = value, fill = factor(cluster))) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Comparaison des moyennes pour chaque variable pour les 2 groupes", x = "Variables", y = "Valeurs") +
+  scale_fill_discrete(name = "Cluster") +
+  theme(legend.position = "top")
+```
+
+Graphiquement, on peut observer que les deux groupes se distinguent principalement par les variables `KillsPg`, `HeadshotKillsPg`, `WinRatio` et `DamagePg`. Le second groupe semble avoir des performances plus élevées dans ces domaines, tandis que le premier groupe semble avoir des performances plus faibles. On distingue donc 2 catégories :
+
+- Les joueurs "élites", qui ont des performances élevées dans les domaines clés tels que les kills, les headshots et les dégâts.
+- Les joueurs "forts", qui ont des performances un peu plus faibles dans ces domaines.
+
+On y observe ainsi un impact significatif sur la variable `WinRatio`, qui est un indicateur clé de la performance des joueurs. Cette segmentation dans ce sous-groupe nous montre que la différence de niveau entre un bon joueur et un excellent joueur est importante.
+
+# Conclusion
+
+Dans ce projet, nous avons exploré différentes méthodes de clustering pour segmenter les joueurs de PUBG en fonction de leurs performances. Nous avons utilisé la classification ascendante hiérarchique (CAH), les K-means, les K-médoïdes et les modèles de mélange pour regrouper les joueurs en différents groupes. Nous avons comparé les résultats obtenus avec ces différentes méthodes et avons proposé une segmentation des joueurs en 3 groupes distincts. En fonction de ces groupes, nous avons suggéré des recommandations personnalisées pour chaque type de joueur. Ce projet montre comment l'analyse de clustering peut être utilisée pour segmenter les joueurs en fonction de leurs caractéristiques et de leurs performances, et comment ces informations peuvent être utilisées pour proposer des recommandations personnalisées et améliorer l'expérience des joueurs.
+
